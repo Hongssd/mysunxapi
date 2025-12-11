@@ -397,7 +397,7 @@ func (ws *WsStreamClient) handleResult(resultChan chan []byte, errChan chan erro
 
 				// Auth Success
 				if strings.Contains(string(data), "op\":\"auth") {
-					log.Info("auth success: ", string(data))
+					log.Debug("auth success: ", string(data))
 					continue
 				}
 
@@ -718,7 +718,7 @@ func (ws *WsStreamClient) SendAuthMessage() error {
 	if err != nil {
 		return err
 	}
-	log.Infof("Sending auth message: %s", string(data))
+	log.Debugf("Sending auth message: %s", string(data))
 
 	ws.writeMu.Lock()
 	defer ws.writeMu.Unlock()
@@ -849,7 +849,7 @@ type PublicPongReq struct {
 
 func (ppr *PublicPingResp) SendPong(c *websocket.Conn) error {
 	var pongReq PublicPongReq
-	pongReq.Pong = time.Now().UnixMilli()
+	pongReq.Pong = ppr.Ping
 	data, err := json.Marshal(pongReq)
 	if err != nil {
 		return err
@@ -858,7 +858,7 @@ func (ppr *PublicPingResp) SendPong(c *websocket.Conn) error {
 	if err != nil {
 		return err
 	}
-	// log.Info("public ping pong send pong: ", string(data))
+	log.Debug("public ping pong send pong: ", string(data))
 	return nil
 }
 
@@ -868,6 +868,11 @@ type PrivatePingpongErr struct {
 	ErrMsg  string `json:"err-msg,omitempty"`
 }
 
+type PrivatePongReq struct {
+	Op string `json:"op"` // pong
+	Ts string `json:"ts"`
+}
+
 type PrivatePingPongRes struct {
 	Op string `json:"op"` // ping or pong
 	Ts string `json:"ts"`
@@ -875,12 +880,15 @@ type PrivatePingPongRes struct {
 }
 
 func (ppr *PrivatePingPongRes) SendPong(c *websocket.Conn) error {
-	ppr.Op = "pong"
-	data, err := json.Marshal(ppr)
+	pongReq := PrivatePongReq{
+		Op: "pong",
+		Ts: ppr.Ts,
+	}
+	data, err := json.Marshal(pongReq)
 	if err != nil {
 		return err
 	}
-	// log.Info("private ping pong send pong: ", string(data))
+	log.Debug("private ping pong send pong: ", string(data))
 	return c.WriteMessage(websocket.TextMessage, data)
 }
 
