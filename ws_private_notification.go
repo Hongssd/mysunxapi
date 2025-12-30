@@ -9,9 +9,16 @@ type WsNotificationCommonReq struct {
 }
 
 func (ws *PrivateWsStreamClient) SubscribeAccount(isSubscribe bool) (*Subscription[WsNotificationCommonReq, WsAccountRes], error) {
+	subKey := "account"
+
+	if isSubscribe {
+		if existingSub, ok := ws.accountSubMap.Load(subKey); ok {
+			return existingSub, nil
+		}
+	}
+
 	reqId := node.Generate().String()
 	subReq := []*WsNotificationCommonReq{}
-	subKey := "account"
 	if isSubscribe {
 		subReq = append(subReq, &WsNotificationCommonReq{
 			Op:    "sub",
@@ -47,9 +54,16 @@ func (ws *PrivateWsStreamClient) SubscribePositions(contractCodes []string, isSu
 		return nil, fmt.Errorf("contractCode is required")
 	}
 
+	subKey := "positions"
+
+	if isSubscribe {
+		if existingSub, ok := ws.positionsSubMap.Load(subKey); ok {
+			return existingSub, nil
+		}
+	}
+
 	reqId := node.Generate().String()
 	subReqs := []*WsPositionsReq{}
-	subKey := "positions"
 	if isSubscribe {
 		for _, contractCode := range contractCodes {
 			subReqs = append(subReqs, &WsPositionsReq{
@@ -95,9 +109,16 @@ func (ws *PrivateWsStreamClient) SubscribeMatchOrders(contractCodes []string, is
 		return nil, fmt.Errorf("contractCode is required")
 	}
 
+	subKey := "match_orders"
+
+	if isSubscribe {
+		if existingSub, ok := ws.matchOrdersSubMap.Load(subKey); ok {
+			return existingSub, nil
+		}
+	}
+
 	reqId := node.Generate().String()
 	subReqs := []*WsMatchOrdersReq{}
-	subKey := "match_orders"
 	if isSubscribe {
 		for _, contractCode := range contractCodes {
 			subReqs = append(subReqs, &WsMatchOrdersReq{
@@ -143,10 +164,17 @@ func (ws *PrivateWsStreamClient) SubscribeTrade(contractCodes []string, isSubscr
 		return nil, fmt.Errorf("contractCode is required")
 	}
 
+	subKey := "trade"
+
+	if isSubscribe {
+		if existingSub, ok := ws.tradeSubMap.Load(subKey); ok {
+			return existingSub, nil
+		}
+	}
+
 	reqId := node.Generate().String()
 	subReqs := []*WsTradeReq{}
 
-	subKey := "trade"
 	if isSubscribe {
 		for _, contractCode := range contractCodes {
 			subReqs = append(subReqs, &WsTradeReq{
@@ -192,10 +220,17 @@ func (ws *PrivateWsStreamClient) SubscribeOrders(contractCodes []string, isSubsc
 		return nil, fmt.Errorf("contractCode is required")
 	}
 
+	subKey := "orders"
+
+	if isSubscribe {
+		if existingSub, ok := ws.ordersSubMap.Load(subKey); ok {
+			return existingSub, nil
+		}
+	}
+
 	reqId := node.Generate().String()
 	subReqs := []*WsOrdersReq{}
 
-	subKey := "orders"
 	if isSubscribe {
 		for _, contractCode := range contractCodes {
 			subReqs = append(subReqs, &WsOrdersReq{
