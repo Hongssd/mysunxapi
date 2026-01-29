@@ -96,6 +96,10 @@ type WsStreamClient struct {
 	resultChan chan []byte
 	errChan    chan error
 	isClose    bool
+	isLoggedIn bool // 是否已登录(鉴权成功)
+
+	// 鉴权相关
+	authResultChan chan *WsAuthRes // 鉴权结果通道
 
 	AutoReConnectTimes int //自动重连次数
 	writeMu            sync.Mutex
@@ -666,16 +670,29 @@ func (ws *WsStreamClient) handleResult(resultChan chan []byte, errChan chan erro
 					time.Sleep(5 * time.Second)
 					err := ws.OpenConn()
 					for err != nil {
-						log.Error("意外断连,5秒后自动重连: ", err.Error())
+						log.Error("重连失败,5秒后重试: ", err.Error())
 						time.Sleep(5 * time.Second)
 						err = ws.OpenConn()
 					}
 					ws.AutoReConnectTimes += 1
+
 					go func() {
-						//重新订阅
-						err = ws.reSubscribeForReconnect()
-						if err != nil {
-							log.Error(err)
+						// 如果是私有流，需要重新登录
+						_, isPrivate := getWsApiPath(ws.wsType)
+						if isPrivate && ws.client != nil {
+							loginErr := ws.Login()
+							for loginErr != nil {
+								log.Error("重新登录失败,2秒后重试: ", loginErr.Error())
+								time.Sleep(2 * time.Second)
+								loginErr = ws.Login()
+							}
+							log.Info("重连后登录成功")
+						}
+
+						// 重新订阅
+						resubErr := ws.reSubscribeForReconnect()
+						if resubErr != nil {
+							log.Error("重新订阅失败: ", resubErr)
 						}
 					}()
 				} else {
@@ -688,17 +705,23 @@ func (ws *WsStreamClient) handleResult(resultChan chan []byte, errChan chan erro
 				}
 
 				// log.Warn("data: ", string(data))
-				// Auth Success
-				if strings.Contains(string(data), "op\":\"auth") {
-					log.Debug("auth success: ", string(data))
-					continue
-				}
-
-				// Auth Error
-				if strings.Contains(string(data), "op\":\"error") {
-					log.Error("sub error: ", string(data))
-					ws.isClose = true
-					ws.errChan <- fmt.Errorf("sub error: %s", string(data))
+				// Auth Result (Success or Error)
+				if strings.Contains(string(data), "op\":\"auth") || strings.Contains(string(data), "op\":\"error") {
+					authRes := &WsAuthRes{}
+					err := json.Unmarshal(data, authRes)
+					if err != nil {
+						log.Error("auth result unmarshal error: ", err)
+						continue
+					}
+					// 发送鉴权结果到通道
+					if ws.authResultChan != nil {
+						select {
+						case ws.authResultChan <- authRes:
+							log.Debugf("auth result sent: %+v", authRes)
+						default:
+							log.Warn("authResultChan is full, dropping auth result")
+						}
+					}
 					continue
 				}
 
@@ -901,42 +924,24 @@ func (ws *WsStreamClient) OpenConn() error {
 		}
 		ws.conn = conn
 		ws.isClose = false
+		ws.isLoggedIn = false
 		ws.connId = ""
 		log.Infof("OpenConn success to: %s", apiUrl)
 
 		ws.handleResult(ws.resultChan, ws.errChan)
-
-		// 如果是私有连接，连接建立后发送鉴权消息
-		if isPrivate {
-			err = ws.SendAuthMessage()
-			if err != nil {
-				log.Errorf("SendAuthMessage error: %v", err)
-				return err
-			}
-		}
-
-		return err
+		return nil
 	} else {
 		conn, err := wsStreamServe(apiUrl, ws.resultChan, ws.errChan, isPrivate)
 		if err != nil {
 			return err
 		}
 		ws.conn = conn
+		ws.isLoggedIn = false
 		ws.connId = ""
 		log.Info("Auto ReOpenConn success to:", apiUrl)
 
 		ws.handleResult(ws.resultChan, ws.errChan)
-
-		// 如果是私有连接，重连后也需要发送鉴权消息
-		if isPrivate {
-			err = ws.SendAuthMessage()
-			if err != nil {
-				log.Errorf("SendAuthMessage error: %v", err)
-				return err
-			}
-		}
-
-		return err
+		return nil
 	}
 }
 
@@ -949,6 +954,14 @@ type WsAuthReq struct {
 	SignatureVersion string `json:"SignatureVersion"`
 	Timestamp        string `json:"Timestamp"`
 	Signature        string `json:"Signature"`
+}
+
+// WsAuthRes 鉴权返回结构
+type WsAuthRes struct {
+	Op      string `json:"op"`
+	Type    string `json:"type,omitempty"`
+	ErrCode int    `json:"err-code,omitempty"`
+	ErrMsg  string `json:"err-msg,omitempty"`
 }
 
 func handlerWsStreamRequestApi(ws *WsStreamClient) (string, bool) {
@@ -973,8 +986,8 @@ func handlerWsStreamRequestApi(ws *WsStreamClient) (string, bool) {
 	return u.String(), isPrivate
 }
 
-// SendAuthMessage 发送鉴权消息
-func (ws *WsStreamClient) SendAuthMessage() error {
+// sendAuthMessage 发送鉴权消息
+func (ws *WsStreamClient) sendAuthMessage() error {
 	if ws == nil || ws.conn == nil || ws.isClose {
 		return fmt.Errorf("websocket is close")
 	}
@@ -1026,6 +1039,43 @@ func (ws *WsStreamClient) SendAuthMessage() error {
 	ws.writeMu.Lock()
 	defer ws.writeMu.Unlock()
 	return ws.conn.WriteMessage(websocket.TextMessage, data)
+}
+
+// Login 登录鉴权(对外方法)
+// 发送鉴权消息并同步等待结果
+func (ws *WsStreamClient) Login() error {
+	if ws == nil || ws.conn == nil || ws.isClose {
+		return fmt.Errorf("websocket is close")
+	}
+	if ws.client == nil || ws.client.AccessKey == "" || ws.client.SecretKey == "" {
+		return fmt.Errorf("client credentials not set")
+	}
+
+	// 初始化鉴权结果通道
+	ws.authResultChan = make(chan *WsAuthRes, 1)
+
+	// 发送鉴权消息
+	err := ws.sendAuthMessage()
+	if err != nil {
+		return err
+	}
+
+	// 同步等待鉴权结果
+	select {
+	case authRes := <-ws.authResultChan:
+		if authRes == nil {
+			return fmt.Errorf("auth failed: nil response")
+		}
+		if authRes.ErrCode != 0 || authRes.ErrMsg != "" {
+			ws.isLoggedIn = false
+			return fmt.Errorf("auth failed: [%d] %s", authRes.ErrCode, authRes.ErrMsg)
+		}
+		ws.isLoggedIn = true
+		log.Info("Login success")
+		return nil
+	case <-time.After(10 * time.Second):
+		return fmt.Errorf("auth timeout")
+	}
 }
 
 func getWsApiPath(wsType WsAPIType) (string, bool) {

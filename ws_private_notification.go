@@ -17,6 +17,14 @@ func (ws *PrivateWsStreamClient) SubscribeAccount(isSubscribe bool) (*Subscripti
 		}
 	}
 
+	if !ws.isLoggedIn {
+		err := ws.Login()
+		if err != nil {
+			log.Error("Login error: ", err)
+			return nil, err
+		}
+	}
+
 	reqId := node.Generate().String()
 	subReq := []*WsNotificationCommonReq{}
 	if isSubscribe {
@@ -59,6 +67,14 @@ func (ws *PrivateWsStreamClient) SubscribePositions(contractCodes []string, isSu
 	if isSubscribe {
 		if existingSub, ok := ws.positionsSubMap.Load(subKey); ok {
 			return existingSub, nil
+		}
+	}
+
+	if !ws.isLoggedIn {
+		err := ws.Login()
+		if err != nil {
+			log.Error("Login error: ", err)
+			return nil, err
 		}
 	}
 
@@ -117,6 +133,14 @@ func (ws *PrivateWsStreamClient) SubscribeMatchOrders(contractCodes []string, is
 		}
 	}
 
+	if !ws.isLoggedIn {
+		err := ws.Login()
+		if err != nil {
+			log.Error("Login error: ", err)
+			return nil, err
+		}
+	}
+
 	reqId := node.Generate().String()
 	subReqs := []*WsMatchOrdersReq{}
 	if isSubscribe {
@@ -169,6 +193,14 @@ func (ws *PrivateWsStreamClient) SubscribeTrade(contractCodes []string, isSubscr
 	if isSubscribe {
 		if existingSub, ok := ws.tradeSubMap.Load(subKey); ok {
 			return existingSub, nil
+		}
+	}
+
+	if !ws.isLoggedIn {
+		err := ws.Login()
+		if err != nil {
+			log.Error("Login error: ", err)
+			return nil, err
 		}
 	}
 
@@ -225,6 +257,14 @@ func (ws *PrivateWsStreamClient) SubscribeOrders(contractCodes []string, isSubsc
 	if isSubscribe {
 		if existingSub, ok := ws.ordersSubMap.Load(subKey); ok {
 			return existingSub, nil
+		}
+	}
+
+	if !ws.isLoggedIn {
+		err := ws.Login()
+		if err != nil {
+			log.Error("Login error: ", err)
+			return nil, err
 		}
 	}
 
