@@ -896,6 +896,9 @@ func (ws *WsStreamClient) OpenConn() error {
 	apiUrl, isPrivate := handlerWsStreamRequestApi(ws)
 	if ws.conn == nil {
 		conn, err := wsStreamServe(apiUrl, ws.resultChan, ws.errChan, isPrivate)
+		if err != nil {
+			return err
+		}
 		ws.conn = conn
 		ws.isClose = false
 		ws.connId = ""
@@ -915,6 +918,9 @@ func (ws *WsStreamClient) OpenConn() error {
 		return err
 	} else {
 		conn, err := wsStreamServe(apiUrl, ws.resultChan, ws.errChan, isPrivate)
+		if err != nil {
+			return err
+		}
 		ws.conn = conn
 		ws.connId = ""
 		log.Info("Auto ReOpenConn success to:", apiUrl)
@@ -969,6 +975,10 @@ func handlerWsStreamRequestApi(ws *WsStreamClient) (string, bool) {
 
 // SendAuthMessage 发送鉴权消息
 func (ws *WsStreamClient) SendAuthMessage() error {
+	if ws == nil || ws.conn == nil || ws.isClose {
+		return fmt.Errorf("websocket is close")
+	}
+
 	timestamp := time.Now().UTC().Format("2006-01-02T15:04:05")
 
 	reqMap := make(map[string]string)
