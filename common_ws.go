@@ -918,7 +918,7 @@ func (ws *WsStreamClient) OpenConn() error {
 
 	apiUrl, isPrivate := handlerWsStreamRequestApi(ws)
 	if ws.conn == nil {
-		conn, err := wsStreamServe(apiUrl, ws.resultChan, ws.errChan, isPrivate)
+		conn, err := wsStreamServe(apiUrl, ws.resultChan, ws.errChan, isPrivate, &ws.writeMu)
 		if err != nil {
 			return err
 		}
@@ -931,7 +931,7 @@ func (ws *WsStreamClient) OpenConn() error {
 		ws.handleResult(ws.resultChan, ws.errChan)
 		return nil
 	} else {
-		conn, err := wsStreamServe(apiUrl, ws.resultChan, ws.errChan, isPrivate)
+		conn, err := wsStreamServe(apiUrl, ws.resultChan, ws.errChan, isPrivate, &ws.writeMu)
 		if err != nil {
 			return err
 		}
@@ -1098,7 +1098,7 @@ func GzipDecode(in []byte) ([]byte, error) {
 	return io.ReadAll(reader)
 }
 
-func wsStreamServe(api string, resultChan chan []byte, errChan chan error, isPrivate bool) (*websocket.Conn, error) {
+func wsStreamServe(api string, resultChan chan []byte, errChan chan error, isPrivate bool, writeMu *sync.Mutex) (*websocket.Conn, error) {
 	dialer := websocket.DefaultDialer
 	if WsUseProxy {
 		proxy, err := getRandomProxy()
@@ -1140,7 +1140,7 @@ func wsStreamServe(api string, resultChan chan []byte, errChan chan error, isPri
 				}
 			}
 
-			isPing, err := handlePingPong(c, message, isPrivate)
+			isPing, err := handlePingPong(c, message, isPrivate, writeMu)
 			if err != nil {
 				errChan <- err
 				return
@@ -1155,7 +1155,7 @@ func wsStreamServe(api string, resultChan chan []byte, errChan chan error, isPri
 	return c, err
 }
 
-func handlePingPong(c *websocket.Conn, message []byte, isPrivate bool) (bool, error) {
+func handlePingPong(c *websocket.Conn, message []byte, isPrivate bool, writeMu *sync.Mutex) (bool, error) {
 	if isPrivate {
 		var ppr PrivatePingPongRes
 		err := json.Unmarshal(message, &ppr)
@@ -1166,7 +1166,7 @@ func handlePingPong(c *websocket.Conn, message []byte, isPrivate bool) (bool, er
 		if ppr.Op == "error" {
 			return true, fmt.Errorf("private ping pong error: %s", ppr.ErrMsg)
 		} else if ppr.Op == "ping" {
-			err = ppr.SendPong(c)
+			err = ppr.SendPong(c, writeMu)
 			if err != nil {
 				return true, err
 			}
@@ -1180,7 +1180,7 @@ func handlePingPong(c *websocket.Conn, message []byte, isPrivate bool) (bool, er
 		}
 
 		if ppr.Ping > 0 {
-			err = ppr.SendPong(c)
+			err = ppr.SendPong(c, writeMu)
 			if err != nil {
 				return true, err
 			}
@@ -1200,12 +1200,16 @@ type PublicPongReq struct {
 	Pong int64 `json:"pong"`
 }
 
-func (ppr *PublicPingResp) SendPong(c *websocket.Conn) error {
+func (ppr *PublicPingResp) SendPong(c *websocket.Conn, writeMu *sync.Mutex) error {
 	var pongReq PublicPongReq
 	pongReq.Pong = ppr.Ping
 	data, err := json.Marshal(pongReq)
 	if err != nil {
 		return err
+	}
+	if writeMu != nil {
+		writeMu.Lock()
+		defer writeMu.Unlock()
 	}
 	err = c.WriteMessage(websocket.TextMessage, data)
 	if err != nil {
@@ -1232,7 +1236,7 @@ type PrivatePingPongRes struct {
 	PrivatePingpongErr
 }
 
-func (ppr *PrivatePingPongRes) SendPong(c *websocket.Conn) error {
+func (ppr *PrivatePingPongRes) SendPong(c *websocket.Conn, writeMu *sync.Mutex) error {
 	pongReq := PrivatePongReq{
 		Op: "pong",
 		Ts: ppr.Ts,
@@ -1242,6 +1246,10 @@ func (ppr *PrivatePingPongRes) SendPong(c *websocket.Conn) error {
 		return err
 	}
 	log.Debug("private ping pong send pong: ", string(data))
+	if writeMu != nil {
+		writeMu.Lock()
+		defer writeMu.Unlock()
+	}
 	return c.WriteMessage(websocket.TextMessage, data)
 }
 
